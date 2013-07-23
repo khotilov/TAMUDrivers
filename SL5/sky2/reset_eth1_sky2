@@ -1,0 +1,20 @@
+/sbin/ifdown eth1
+/sbin/service pcratedriver restart
+/sbin/ifconfig eth1 mtu 9000
+/sbin/ifconfig eth1 promisc
+/sbin/ifup eth1
+/sbin/ethtool -s eth1   autoneg off speed 1000 duplex full
+sleep 4
+/sbin/ifup eth1
+
+echo
+echo ">>>> /sbin/ethtool eth1"
+echo
+/sbin/ethtool eth1
+echo
+echo ">>>> /sbin/ifconfig eth1"
+echo
+/sbin/ifconfig eth1
+echo ">>>> cat /proc/sys/dev/schar/0"
+echo
+cat /proc/sys/dev/schar/0

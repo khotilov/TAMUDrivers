@@ -1,0 +1,9 @@
+### Getting the source of sky2 driver that comes with the kernel
+
+wget http://ftp1.scientificlinux.org/linux/scientific/5x/SRPMS/vendor/kernel-`uname -r`.src.rpm
+# install the src into the usual location
+sudo rpm -ihv kernel-`uname -r`.src.rpm
+# unpack the code and apply patches
+sudo rpmbuild -bp /usr/src/redhat/SPECS/kernel.spec
+# the sky2 code is most likely here:
+ls -l /usr/src/redhat/BUILD/kernel-`uname -r | awk 'BEGIN{FS="-";} {print $1}'`/linux-`uname -r`.x86_64/drivers/net/sky2.*
