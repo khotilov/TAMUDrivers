@@ -1,6 +1,9 @@
 # Object files
 *.o
 
+# kernel modules
+*.ko
+
 # Libraries
 *.lib
 *.a
