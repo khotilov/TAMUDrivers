@@ -67,7 +67,7 @@ case "$1" in
 	[ -c /dev/schar ] || (echo -n "device not present or bad"; warning; echo)
 	/bin/rm -f /dev/schar
 	/bin/mknod /dev/schar c 42 0
-	/bin/chgrp csc /dev/schar
+	/bin/chgrp cscdev /dev/schar
 	/bin/chmod ug+rw /dev/schar
         # the next two lines should be removed ...
 	/bin/chmod ugo+rwx /dev/schar
