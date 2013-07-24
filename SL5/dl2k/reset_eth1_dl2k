@@ -3,5 +3,17 @@
 /sbin/ifconfig eth1 mtu 9000
 /sbin/ifconfig eth1 promisc
 /sbin/ifup eth1
-/usr/sbin/ethtool -s eth1   autoneg off speed 1000 duplex full
-/usr/sbin/ethtool eth1
+/sbin/ethtool -s eth1   autoneg off speed 1000 duplex full
+sleep 4
+
+echo
+echo ">>>> /sbin/ethtool eth1"
+echo
+/sbin/ethtool eth1
+echo
+echo ">>>> /sbin/ifconfig eth1"
+echo
+/sbin/ifconfig eth1
+echo ">>>> cat /proc/sys/dev/schar/0"
+echo
+cat /proc/sys/dev/schar/0
