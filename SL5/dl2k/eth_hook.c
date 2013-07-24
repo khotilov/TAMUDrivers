@@ -10,7 +10,7 @@
 #  define MODULE
 #endif
 
-//#include <linux/config.h>
+// #include <linux/config.h>
 
 #include <linux/module.h>
 
@@ -34,15 +34,12 @@
 #include <linux/etherdevice.h> // eth_xxx()
 
 #include <asm/io.h>
-//#include <linux/bigphysarea.h> // gcc couldn't find this, it seems to work fine without it -Joe
+// #include <linux/bigphysarea.h>
 
 #include "schar.h"
 
-MODULE_LICENSE("GPL");
-
 /* settable parameters */
-static char *schar_name = "shar";//NULL;
-static unsigned int minornum = 1;
+static char *schar_name = NULL;
 
 
 
@@ -68,7 +65,6 @@ static struct file_operations schar_fops = {
 	ioctl: schar_ioctl,
 	open: schar_open,
 	release: schar_release,
-	owner: THIS_MODULE, /* Joe */
 };
 
 
@@ -96,7 +92,7 @@ static ctl_table schar_sysctl_table[] = {
 };
 
 static ctl_table schar_dir[] = {
-	{ DEV_SCHAR,		/* /proc/sys/dev/schar */
+	{ DEV_SCHAR,		/* /proc/dev/schar */
 	  "schar",		/* name */
 	  NULL,
 	  0,
@@ -106,7 +102,7 @@ static ctl_table schar_dir[] = {
 };
 
 static ctl_table schar_root_dir[] = {
-	{ CTL_DEV,		/* /proc/sys/dev */
+	{ CTL_DEV,		/* /proc/dev */
 	  "dev",		/* name */
 	  NULL,
 	  0,
@@ -116,16 +112,22 @@ static ctl_table schar_root_dir[] = {
 };
 
 
-#define MMT_BUF_SIZE 131072 /* from where does this number come??? */
+#define MMT_BUF_SIZE 131072
 #define SKB_EXTRA 14
 char *pnt_ring;
-static int pack_left; /* counter for the number of packets in bufr */
-static char *bufw; /* write buffer (data going out) */
+static int pack_left;
+static char *bufw;
 static int nbufw={0};
-static char *bufr; /* read buffer (data coming in) */
+static char *bufr;
 static int endcond={0};
 static int wakecond={0};
 static int ERROR={0};
+static int rd_tmo = {100};
+//Added by Jinghua Liu
+static int wakestatus=0;
+static int pack_drop=0;
+
+
 
 static unsigned long int proc_rpackets;
 static unsigned long int proc_rbytesL;
@@ -137,19 +139,19 @@ static unsigned short int proc_tbytesH;
 
 
 /* module parameters and descriptions */
-//MODULE_PARM(schar_name, "s");
-//MODULE_PARM_DESC(schar_name, "Name of device");
-
+// MODULE_PARM(schar_name, "s");
+// MODULE_PARM_DESC(schar_name, "Name of device");
+MODULE_LICENSE("GPL");
 
 MODULE_DESCRIPTION("schar, Sample character with ethernet hook");
 MODULE_AUTHOR("S. Durkin");
 
 int init_module2(void)
 { 
-  /* allocate some memory for the data */
   pnt_ring=kmalloc(MMT_BUF_SIZE,GFP_KERNEL);
-  if (!pnt_ring)printk(KERN_INFO " eth_hook: failed kmalloc\n");
+  if (!pnt_ring)printk(KERN_INFO "failed kmalloc\n");
   pack_left=0;
+  pack_drop=0;
   bufw=pnt_ring;
   nbufw=0;
   bufr=pnt_ring;
@@ -160,7 +162,6 @@ int init_module2(void)
 
 int cleanup_exit2(void)
 {
-  /* done with the memory */
   kfree(pnt_ring);
   return 0;
 }
@@ -170,7 +171,15 @@ int cleanup_exit2(void)
 int netif_rx_hook(struct sk_buff *skb)
 { 
   int i,icnt;
-// write length to first word
+  if(nbufw+skb->len+16 > MMT_BUF_SIZE)
+  { printk(KERN_INFO "eth_hook: out of memory, incoming packet dropped! \n");
+    pack_drop++;
+    ERROR=1;
+    kfree_skb(skb);
+    return 1;
+  }
+
+// write length to first word 
   *(int *)bufw=skb->len+14;
   bufw=bufw+2;
 // fill bigphys memory and increment counters
@@ -183,7 +192,7 @@ int netif_rx_hook(struct sk_buff *skb)
   pack_left=pack_left+1; 
  
   if(nbufw+9000> MMT_BUF_SIZE){
-        printk(KERN_CRIT " ETH_HOOK: Catastropic Error! Overwrote memory! Reset! \n");
+        printk(KERN_CRIT "LSD: Catastropic Error! Overwrote memory! Reset! \n");
 	pack_left=0;
 	bufw=pnt_ring;
 	nbufw=0;
@@ -195,6 +204,7 @@ int netif_rx_hook(struct sk_buff *skb)
   if(wakecond==0&&pack_left>0){
                        wakecond=1;
 		       wake_up_interruptible(&schar_wq);
+                       wakestatus=2;
 		       wake_up_interruptible(&schar_poll_read); 
   }
 
@@ -239,6 +249,7 @@ static int schar_ioctl(struct inode *inode, struct file *file,
 
 		case SCHAR_RESET: {
                   pack_left=0;
+                  pack_drop=0;
                   bufw=pnt_ring;
                   nbufw=0;
                   bufr=pnt_ring;
@@ -257,6 +268,21 @@ static int schar_ioctl(struct inode *inode, struct file *file,
 		// printk(KERN_INFO "ioct:l SCHAR_END %d  \n",blocking); 
 	        return 0;
 		}
+
+	        case SCHAR_SET_TIMEOUT: {
+                  if((int)arg >0)   rd_tmo=(int)arg;
+		  //printk(KERN_INFO "SCHAR_SET_TIMEOUT %d ",rd_tmo);
+                  return 0;  
+	        }
+
+	        case SCHAR_GET_TIMEOUT: {
+                  return rd_tmo;  
+	        }
+
+                case SCHAR_INQR: {
+                return (pack_left & 0xffff) | (endcond<<16) 
+                       | (wakecond<<20) | (wakestatus<<24) | (ERROR<<28);
+                }
 
 
 		default: {
@@ -288,13 +314,18 @@ static int schar_read_proc(ctl_table *ctl, int write, struct file *file,
 		return 0;
 	}
 	v2.6remove */
-	len += sprintf(schar_proc_string, "GIGABIT DRIVER SIMPLE JTAG\n\n");
+	len += sprintf(schar_proc_string, "GIGABIT SIMPLE CHAR DRIVER\n\n");
 	len += sprintf(schar_proc_string+len, " LEFT TO READ: \n");
-        len += sprintf(schar_proc_string+len," pack_left\t\t%d packets\n",pack_left); 
+        len += sprintf(schar_proc_string+len," pack_left\t\t%d packets\n",pack_left);
+ 	len += sprintf(schar_proc_string+len, " wakestatus\t\t%d\n",wakestatus);
+        len += sprintf(schar_proc_string+len, " wakecond\t\t%d\n",wakecond);
+	len += sprintf(schar_proc_string+len, " endcond\t\t%d\n",endcond);
+	len += sprintf(schar_proc_string+len, " error\t\t%d\n",ERROR);	
 	len += sprintf(schar_proc_string+len, " RECEIVE: \n");
 	len += sprintf(schar_proc_string+len, "  recieve\t\t%ld packets\n",proc_rpackets);
         len += sprintf(schar_proc_string+len, "  receive    \t\t\t%02d%09ld bytes\n",proc_rbytesH,proc_rbytesL); 
         len += sprintf(schar_proc_string+len, "  memory  \t\t\t%09d bytes\n",MMT_BUF_SIZE);
+        len += sprintf(schar_proc_string+len, "  dropped \t\t%d packets\n",pack_drop);
  	len += sprintf(schar_proc_string+len, " TRANSMIT: \n");
         len += sprintf(schar_proc_string+len, "  transmit\t\t%d packets \n",proc_tpackets);
         len += sprintf(schar_proc_string+len, "  transmit    \t\t\t%02d%09ld bytes\n\n",proc_tbytesH,proc_tbytesL); 
@@ -305,22 +336,11 @@ static int schar_read_proc(ctl_table *ctl, int write, struct file *file,
 }
 
 
-static ssize_t schar_read(struct file *file, 
-			  char *buf,  /* buffer to fill */
-			  size_t count, /* length of buf */
+static ssize_t schar_read(struct file *file, char *buf, size_t count,
 			  loff_t *offset)
-{
-  /* We want to take the data from bufr and put it into buf */
-
-  /* How do I deal with the minor number here?  Do I need a different
-     bufr for each minor number? */
-
-  unsigned short int tbuf[3];
+{ unsigned short int tbuf[3];
   int tsend,lsend;
   char *bufr2;
-
-  //printk(KERN_INFO " eth_hook: schar_read... minor number: %d\n",minornum);
-
   
   /* remove sleep_on
   if(pack_left<=0&&endcond!=1){
@@ -331,120 +351,109 @@ static ssize_t schar_read(struct file *file,
   remove sleep_on */
 
   if(pack_left<=0&&endcond!=1)wakecond=0;
-  wait_event_interruptible(schar_wq,(wakecond!=0));
+  wakestatus=1;
+  wait_event_interruptible_timeout(schar_wq,(wakecond!=0),rd_tmo);
+  wakestatus=3;
   if (signal_pending(current))return -EINTR;
-  
-
-  /* bufr can contain a bunch of smaller packets.  The first two chars
-     of each packet are an unsigned short int that tells the length of
-     the following data in the packet.  pack_left is a count of how
-     many packets are in bufr. */
 
   if(pack_left>0){
-    lsend=*(unsigned short int *)bufr; /* get length of data in this packet */
-    bufr2=bufr+2; /* move bufr2 to the start of data in this packet */
+        lsend=*(unsigned short int *)bufr;
+        bufr2=bufr+2;
+        if (copy_to_user(buf,bufr2,lsend))
+		return -EFAULT;
+        count=lsend;
+	file->f_pos += count;
+        bufr=bufr+lsend+2;
+        pack_left=pack_left-1;
+        if(pack_left<=0){
+                  pack_left=0;
+                  bufw=pnt_ring;
+                  nbufw=0;
+                  bufr=pnt_ring;
+        }
 
-    /* printk(KERN_INFO " eth_hook: packet size: %u \n", lsend); */
-    if(lsend > 0) 
-      /* printk(KERN_INFO " eth_hook: bufr2[0]: %02x \n", bufr2[0]); */
-    
-    if (copy_to_user(buf,bufr2,lsend)) /* copy the packet into buf */
-      return -EFAULT;
-    count=lsend; /* set count to the number of bytes sent in this packet */
-    file->f_pos += count; /* move file position */
-    bufr=bufr+lsend+2; /* move burf to the next packet */
-    pack_left=pack_left-1; /* another packet down */
-    if(pack_left<=0){ /* are we done? */
-      pack_left=0; /* reset buffers and counters */
-      bufw=pnt_ring;
-      nbufw=0;
-      bufr=pnt_ring;
-    }
-    return count;
+	return count;
+  }else{
+          tbuf[0]=4;
+          tbuf[1]=0;
+          tbuf[2]=0;
+	  tsend=6;
+          count=tsend;
+          if (copy_to_user(buf,tbuf,tsend))
+		return -EFAULT; 
+   	return count; 
   }
   if(endcond==1){
-    tbuf[0]=6;
-    tbuf[1]=0;
-    tbuf[2]=0;
-    tsend=6;
-    count=tsend;
-    if (copy_to_user(buf,tbuf,tsend))
-      return -EFAULT;  
+          tbuf[0]=6;
+          tbuf[1]=0;
+          tbuf[2]=0;
+	  tsend=6;
+          count=tsend;
+          if (copy_to_user(buf,tbuf,tsend))
+		return -EFAULT;  
   }
-
-  /* return count; */
-  return 0; /* Joe: If it gets here, then nothing was read, right? */
+  return count;
 }
 
 
 
 static int schar_open(struct inode *inode, struct file *file)
 {
-  /* Joe */
-  /* Which device is being opened? */
-  //minornum = iminor(inode);
-  /* Joe */
-
 	/* increment usage count */
 	// MOD_INC_USE_COUNT;
-  printk(KERN_INFO " eth_hook: schar open \n");
-  printk(KERN_INFO " eth_hook: minor number: %d\n",minornum);
-
+//  printk(KERN_INFO " schar open \n");
 	return 0;
 }
 static int schar_release(struct inode *inode, struct file *file)
 {
   //MOD_DEC_USE_COUNT;
-  
-  return 0;
+   
+	return 0;
 }
 
 
 int ethinit_module(void)
 {
-  int res;
-  init_module2();
-  if (schar_name == NULL)
-    schar_name = "schar";
-  
-  
-  /* register device with kernel */
-  res = register_chrdev(SCHAR_MAJOR, schar_name, &schar_fops); /* registers minor #s 0-255 */
-  printk(KERN_INFO " eth_hook: Registering schar device... %d %d %s \n",res,SCHAR_MAJOR,schar_name);
-  if (res) {
-    printk(KERN_INFO " eth_hook: can't register device with kernel \n");
-    // MSG("can't register device with kernel\n");
-    return res;
-  }
-  
-  /* register proc entry */
-  schar_root_header = register_sysctl_table(schar_root_dir, 0);
-  // schar_root_dir->child->de->fill_inode = &schar_fill_inode;
-  
-  init_waitqueue_head(&schar_wq);
-  init_waitqueue_head(&schar_poll_read);
-  
-  
-  return 0;
+	int res;
+        init_module2();
+	if (schar_name == NULL)
+		schar_name = "schar";
+		
+	
+	/* register device with kernel */
+	res = register_chrdev(SCHAR_MAJOR, schar_name, &schar_fops);
+        // printk(KERN_INFO "lsd: %d %d %s \n",res,SCHAR_MAJOR,schar_name);
+	if (res) {
+	  // printk(KERN_INFO "can't register device with kernel \n");
+	  // MSG("can't register device with kernel\n");
+		return res;
+	}
+	
+	/* register proc entry */
+	schar_root_header = register_sysctl_table(schar_root_dir, 0);
+	// schar_root_dir->child->de->fill_inode = &schar_fill_inode;
+	
+        init_waitqueue_head(&schar_wq);
+        init_waitqueue_head(&schar_poll_read);
+
+
+	return 0;
 }
 
 void ethcleanup_module(void)
 {
-  /* unregister device and proc entry */
+	/* unregister device and proc entry */
   cleanup_exit2();
-  printk(KERN_INFO " eth_hook: Unregistering schar device... %d %s \n",SCHAR_MAJOR,schar_name);
-  unregister_chrdev(SCHAR_MAJOR, schar_name);
-  if (schar_root_header)
-    unregister_sysctl_table(schar_root_header);
-  
-  return;
+	unregister_chrdev(SCHAR_MAJOR, "schar");
+	if (schar_root_header)
+		unregister_sysctl_table(schar_root_header);
+	
+	return;
 }
 
 
 
-static ssize_t schar_write(struct file *file, 
-			   const char *buf, /* data to send */
-			   size_t count, /* length of buf */
+static ssize_t schar_write(struct file *file, const char *buf, size_t count,
 			   loff_t *offset)
 {
   //  struct sock *sk;
@@ -457,20 +466,11 @@ static ssize_t schar_write(struct file *file,
   static struct net_device *dev;
   static struct sk_buff *skb;
   static unsigned short proto=0;
-  // printk(KERN_INFO " eth_hook: length %d \n",count);
-  char ethX[5]; /* Joe */
+  // printk(KERN_INFO " length %d \n",count);
 
   // sbuf=kmalloc(9000,GFP_KERNEL);
   len=count;
-
-  /* dev=dev_get_by_name("eth1"); */
-  /* Joe */
-  /* Need to fix this so I can use both eth1 and eth2... */
-  /* I will need to get the minor device number */
-  sprintf(ethX,"eth%u",minornum);
-  dev=dev_get_by_name(ethX);
-  /* Joe */
-
+  dev=dev_get_by_name("eth1");
   err=-ENODEV;
   if (dev == NULL)
    goto out_unlock;
@@ -526,13 +526,13 @@ static ssize_t schar_write(struct file *file,
       } */
  			
   
-     //  printk(KERN_INFO " eth_hook: header length %d  \n",dev->hard_header_len);
+     //  printk(KERN_INFO " header length %d  \n",dev->hard_header_len);
 /* Returns -EFAULT on error */
    //  err = memcpy_fromiovec(skb_put(skb,len), msg->msg_iov, len);
-			
-   err = copy_from_user(skb_put(skb,len),buf, count); /* put the data into skb */
+	
+    err = copy_from_user(skb_put(skb,len),buf, count);
    // err = memcpy_fromio(skb_put(skb,len),sbuf,len);
-   // printk(KERN_INFO " eth_hook: len count %d %d %02x  \n",len,count,*(skb->data+98)&0xff);
+   // printk(KERN_INFO " lsd: len count %d %d %02x  \n",len,count,*(skb->data+98)&0xff);
    skb->protocol = htons(ETH_P_ALL);
    skb->dev = dev;
    skb->priority = 0;
@@ -551,7 +551,7 @@ static ssize_t schar_write(struct file *file,
      
    dev_queue_xmit(skb);
    dev_put(dev); 
-   // printk(KERN_INFO " eth_hook: len count %d %d %02x  \n",len,count,*(skb->data+98)&0xff);
+   // printk(KERN_INFO " lsd: len count %d %d %02x  \n",len,count,*(skb->data+98)&0xff);
 
    // kfree(sbuf);
    proc_tpackets=proc_tpackets+1;
