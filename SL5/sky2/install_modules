@@ -50,7 +50,7 @@ mv ifcfg-eth1 /etc/sysconfig/network-scripts/ifcfg-eth1
 
 # install init and reset scripts
 cp pcratedriver_sky2 /etc/init.d/
-cp reset_eth1_dl2k ~/
+cp reset_eth1_sky2 ~/
 ln -sf ~/reset_eth1_sky2 ~/reset_eth1
 
 # attempt to restart the network
