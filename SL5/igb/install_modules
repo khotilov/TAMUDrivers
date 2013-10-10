@@ -1,0 +1,70 @@
+# network drivers directory location
+DDIR=/lib/modules/`uname -r`/kernel/drivers/net/igb/
+
+echo "before:"
+ls -l $DDIR/igb*.ko
+ls -l $DDIR/eth_hook*.ko
+
+# direct copy the recently built drivers
+cp -f eth_hook_?_vme/eth_hook_?_vme.ko $DDIR
+cp -f igb-*/src/igb_emu.ko $DDIR
+# 
+#make INSTALL_MOD_DIR=kernel/drivers/net -C /lib/modules/$(/bin/uname -r)/build M=`pwd` modules_install
+
+echo "after (make sure they were updated):"
+ls -l $DDIR/igb*.ko
+ls -l $DDIR/eth_hook*.ko
+
+#exit 0
+
+
+#for N in $@
+for N in 1 2
+do
+
+echo "* \n* Installing eth${N} drivers\n*\n"
+
+# if driver changes, update the modprobe.conf so that the system
+# would learn the ethN alias associated with the updated driver
+prev_driver=`grep -E "^alias +eth${N}" /etc/modprobe.conf | awk '{print $3}'`
+if [ "$prev_driver" != "igb_emu" ]
+then
+  echo "updating /etc/modprobe.conf ..."
+  cp  /etc/modprobe.conf .
+  echo "  previous one was saved to $PWD/modprobe.conf"
+  /bin/grep -v  "^[^#].* eth${N}" modprobe.conf > modprobe.conf.new
+  echo "alias eth${N} igb_emu" >> modprobe.conf.new
+  cp modprobe.conf.new /etc/modprobe.conf
+  echo "  done. it might be necessary to reboot."
+fi
+
+# find out adapter's MAC address
+the_mac=`/sbin/ip addr show eth${N} | /bin/grep 'link/ether' | awk '{print $2}'`
+echo "Current eth${N}'s MAC address: $the_mac"
+if [ "x$the_mac" == "x" ]
+then
+  the_mac="00:00:00:00:00:00"
+  echo "WARNING: not able to determine eth${N}'s MAC address!"
+  echo "You will need set correct HWADDR manually in"
+  echo "  /etc/sysconfig/network-scripts/ifcfg-eth${N}"
+fi
+
+# update the ifcfg-ethN
+sed "s/MAC_TO_REPLACE/$the_mac/" ifcfg-eth.template > ifcfg-eth${N}
+sed -i.bck -e "s/DEVICE=[[:print:]]*$/DEVICE=eth${N}/g" -e "s/IPADDR=[[:print:]]*$/IPADDR=192.168.1.${N}/g" ifcfg-eth${N}
+cp /etc/sysconfig/network-scripts/ifcfg-eth${N} ifcfg-eth${N}.old
+echo "previous ifcfg-eth${N} saved as $PWD/ifcfg-eth${N}.old"
+mv ifcfg-eth${N} /etc/sysconfig/network-scripts/ifcfg-eth${N}
+
+done
+
+/sbin/depmod
+
+
+# install init and reset scripts
+cp pcratedriver_igb /etc/init.d/
+cp reset_eth_igb ~/
+ln -sf ~/reset_eth_igb ~/reset_eth
+
+# attempt to restart the network
+~/reset_eth

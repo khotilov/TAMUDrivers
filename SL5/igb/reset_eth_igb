@@ -1,0 +1,33 @@
+/sbin/service pcratedriver_igb restart
+sleep 4
+
+echo
+echo ">>>> lsmod | grep igb"
+/sbin/lsmod | grep igb
+echo
+echo ">>>> lspci -k | grep -A 3 Ethernet"
+/sbin/lspci -k | grep -A 3 Ethernet
+
+echo
+echo ">>>> /sbin/ethtool eth1"
+echo
+/sbin/ethtool eth1
+echo
+echo ">>>> /sbin/ifconfig eth1"
+echo
+/sbin/ifconfig eth1
+echo ">>>> cat /proc/sys/dev/schar/1"
+echo
+cat /proc/sys/dev/schar/1
+
+echo
+echo ">>>> /sbin/ethtool eth2"
+echo
+/sbin/ethtool eth2
+echo
+echo ">>>> /sbin/ifconfig eth2"
+echo
+/sbin/ifconfig eth2
+echo ">>>> cat /proc/sys/dev/schar/2"
+echo
+cat /proc/sys/dev/schar/2

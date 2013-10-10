@@ -1,0 +1,15 @@
+# Intel Corporation I350 Gigabit Fiber Network Connection (rev 01)
+DEVICE=eth1
+BOOTPROTO=static
+IPADDR=192.168.5.2
+ONBOOT=no
+HOTPLUG=no
+HWADDR=MAC_TO_REPLACE
+NETMASK=255.255.0.0
+USERCTL=no
+IPV6INIT=no
+PEERDNS=yes
+TYPE=Ethernet
+MTU=8192
+PROMISC=yes
+SCHARDEV=yes

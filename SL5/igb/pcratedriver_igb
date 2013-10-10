@@ -1,0 +1,141 @@
+#!/bin/bash
+#
+# pcrate driver startup      This is a startup script for use in /etc/init.d 
+# 
+# description:  Start up custom gbit drivers for CMS/EMU Peripheral Crates  
+#
+#-------------------------------------------------------------------------
+
+# Source function library.
+. /etc/rc.d/init.d/functions
+
+function module_parameters(){
+    # Print module parameters (same value for all ports) in a comma separated list ready to be passed to modprobe.
+    #   argument 1: number of ports
+    #   argument 2: value
+    PARAMS=$2
+    for ((I=1;I<$1;I++)); do
+    PARAMS=${PARAMS}",$2"
+    done
+    echo -n $PARAMS
+}
+
+
+PROG=$"Peripheral Crate Gbit driver"
+KERNELVERSION=`/bin/uname -r`
+PCRATEDRIVERLIB=/lib/modules/${KERNELVERSION}/kernel/drivers/net
+PCRATEPROCFILE=/proc/sys/dev/schar/*
+PCRATELOCKFILE=/var/lock/subsys/pcratedriver
+
+
+case "$1" in     
+    start) 
+	echo  $"Starting $PROG: "
+	[ -f $PCRATELOCKFILE ]  && (echo -n "stale lock file, driver not properly stopped"; warning; echo)
+    
+    # look for default (pre-loaded) module and remove it.
+    # (this only applies after a cold start)
+	#/sbin/depmod
+	/bin/grep -q igb_emu /proc/modules
+	if [ "$?" = "0" ]; then 
+	    /sbin/modprobe -r igb_emu; echo -n "cleaning up old igb_emu"; warning; echo
+	fi
+    # 
+	$0 recreate
+	action "eth_hook_1_vme" /sbin/modprobe --first-time eth_hook_1_vme
+	action "eth_hook_2_vme" /sbin/modprobe --first-time eth_hook_2_vme
+
+    # Count the number of ports served by igb_emu
+    #NPORTS=$(( 4 + $(grep -c '^alias eth[01] igb' /etc/modprobe.conf) ))
+    NPORTS=2
+   
+    # Update module dependencies
+    echo "Updating module dependencies"
+    action "depmod" /sbin/depmod
+
+    # for some reason depmod doesn't pick up the dependency of igb_emu on dca
+    action "dca" /sbin/modprobe dca
+   
+    # Load new modules
+    echo "Loading igb_emu"
+    echo "/sbin/modprobe igb_emu InterruptThrottleRate=$(module_parameters $NPORTS 0) QueuePairs=$(module_parameters $NPORTS 0) EEE=$(module_parameters $NPORTS 0) MDD=$(module_parameters $NPORTS 0)"
+    action "igb_emu"  /sbin/modprobe igb_emu InterruptThrottleRate=$(module_parameters $NPORTS 0) QueuePairs=$(module_parameters $NPORTS 0) EEE=$(module_parameters $NPORTS 0)     MDD=$(module_parameters $NPORTS 0)
+	sleep 5
+    #echo "lsmod | grep igb"
+    #/sbin/lsmod | grep igb
+    #/sbin/lspci -k | grep -A 3 Ethernet
+
+    /sbin/ifconfig eth1 192.168.1.1
+    /sbin/ifconfig eth1 promisc mtu 8192 broadcast 192.168.255.255 netmask 255.255.0.0
+    /sbin/ifconfig eth2 192.168.1.2
+    /sbin/ifconfig eth2 promisc mtu 8192 broadcast 192.168.255.255 netmask 255.255.0.0
+
+	action "eth1" /sbin/ifconfig eth1 up -arp
+	action "eth2" /sbin/ifconfig eth2 up -arp
+
+    /sbin/ethtool -s eth1  autoneg off  speed 1000  duplex full
+    /sbin/ethtool -K eth1  rx off  sg off
+    /sbin/ethtool -s eth2  autoneg off  speed 1000  duplex full
+    /sbin/ethtool -K eth2  rx off  sg off
+
+	touch $PCRATELOCKFILE
+	;;
+    
+    stop)
+	echo  $"Stopping $PROG: "
+	[ -f $PCRATELOCKFILE ]  || (echo -n "no lock file, driver not properly started"; warning; echo)
+	action "eth1" /sbin/ifdown eth1
+	action "eth2" /sbin/ifdown eth2
+	action "igb_emu" /sbin/modprobe -r igb_emu
+	action "eth_hook_1_vme" /sbin/modprobe -r eth_hook_1_vme
+	action "eth_hook_2_vme" /sbin/modprobe -r eth_hook_2_vme
+	rm -f $PCRATELOCKFILE
+	;; 		
+
+    restart)
+        # Reload Gbit drivers
+	$0 stop
+	$0 start
+	;;
+
+    condrestart)
+	if [ -f /var/lock/subsys/pcratedriver ]; then
+	    $0 stop
+	    $0 start
+	fi
+	;;
+
+    status)     	   
+	echo  $"Status $PROG: "
+	echo "--- /proc/modules:"
+	/bin/grep igb /proc/modules || echo "none"
+	echo "--- $PCRATEPROCFILE:"
+    for procf in $PCRATEPROCFILE
+    do
+      echo "------ ${procf}:"
+	  [[ -f  $procf ]] && /bin/cat $procf || echo "none"
+    done
+	;;
+
+    recreate)
+        # recreate schar device and make writable for group csc
+	echo $"Recreating $PROG (schar devices): "
+	[[ -c /dev/schar1 && -c /dev/schar2 && -c /dev/schar3 && -c /dev/schar4 && -c /dev/schar5 ]] || (echo -n "device not present or bad"; warning; echo)
+    for N in 1 2 3 4 5
+    do
+      rm -f /dev/schar${N}
+      mknod /dev/schar${N} c 23${N} 0
+      chmod 777 /dev/schar${N}
+      chgrp cscdev /dev/schar${N}
+    done
+	echo -n "/dev/schar1..5 recreated"
+	[[ -c /dev/schar1 && -c /dev/schar2 && -c /dev/schar3 && -c /dev/schar4 && -c /dev/schar5 ]] && success || failure
+	echo
+	;;
+
+    *)
+	/bin/echo $"Usage $0 {start|stop|restart|condrestart|recreate|status}"
+	exit 1
+esac
+
+exit 0
